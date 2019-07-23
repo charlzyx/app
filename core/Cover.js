@@ -13,22 +13,20 @@ const css = {
   },
   center: {
     justifyContent: 'center',
-    alignItems: 'cetner',
+    alignItems: 'center',
   }
 }
 
 class Cover extends Component {
   render() {
-    const { children, center, visible, touchable, ...others } = this.props;
-    return visible ?
-      touchable
-        ? <TouchableWithoutFeedback {...others} style={[css.cover, center ? css.center: null, style]}>
-          {children}
-         </TouchableWithoutFeedback>
-        : <View {...others} style={[css.cover, center ? css.center: null, style]} >
-          {children}
-        </View>
-      : null
+    const { children, center, touchable, style, ...others } = this.props;
+    return touchable
+      ? <TouchableWithoutFeedback {...others} style={[css.cover, center ? css.center: null, style]}>
+        {children}
+      </TouchableWithoutFeedback>
+      : <View {...others} style={[css.cover, center ? css.center: null, style]} >
+        {children}
+      </View>
   }
 }
 

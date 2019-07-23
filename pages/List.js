@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import Page from '../core/Page';
 import R from '../core/router';
 import Detail from './Detail';
+import Hello from '../biz/Hello';
 
 class List extends Page {
   gotoDetail = () => {
@@ -41,6 +42,7 @@ class List extends Page {
       <Text>List</Text>
       <Text>List</Text>
       <Text>List</Text>
+      <Hello></Hello>
       <Text>List</Text>
       <TouchableOpacity onPress={this.gotoDetail}>
         <Text>Detail</Text>

@@ -19,7 +19,7 @@ class Root extends PureComponent {
       history: [],
     }
 
-    event.on('change', this.onChange);
+    this.eventId = event.on(this.onChange);
   }
 
   onChange = (history) => {
@@ -27,10 +27,14 @@ class Root extends PureComponent {
     this.forceUpdate();
   }
 
+  componentWillUnmount() {
+    event.off(this.eventId);
+  }
+
   render() {
     const { history } = this.state;
     return <Layer>
-      {history.map(nav => nav.map(page => page.element))}
+      {history.map(nav => nav.map(route => route.element))}
     </Layer>
   }
 }

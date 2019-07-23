@@ -1,43 +1,61 @@
 import React from 'react';
+import { AppState } from 'react-native';
 import produce, { applyPatches } from 'immer';
 
+
+const EXCEPTION = {
+  // 没有路由历史
+  NO_MORE_HISTORY: 'NO_MORE_HISTORY',
+  // 被 go 里面强行 splice 掉的
+  REJECTED_BY_GO: 'REJECTED_BY_GO',
+  // 被 replace 强行替换掉的
+  REJECTED_BY_REPLACE: 'REJECTED_BY_GO',
+  // 被 Page 里面的 beforeLeave reject 掉的
+  BEFORE_LEAVE_RETURN_NO_PROMISE: 'BEFORE_LEAVE_RETURN_NO_PROMISE',
+  // 路由 path 重复
+  MUTIPLE_ROUTE_PATH: 'MUTIPLE_ROUTE_PATH',
+};
+
+/**
+ * 路由事件管理器
+ */
 export const event = {
   _id: 1,
-  _watchers: {
-    change: {},
-    go: {},
-    push: {},
-    pop: {},
-    wait: {},
-    replace: {},
-    popup: {},
-    dismiss: {},
-  },
-  on(type, cb) {
+  _watchers: {},
+  on(cb) {
     this._id++;
-    this._watchers[type][this._id] = cb;
-    return `${type}|${this._id}`;
+    this._watchers[this._id] = cb;
+    return `${this._id}`;
   },
-  off(eventId) {
-    const [type, id] = eventId.split('|');
-    delete this._watchers[type][id];
+  off(id) {
+    delete this._watchers[id];
   },
-  emit(type, page) {
-    const _watchers = this._watchers[type];
-    Object.keys(_watchers).forEach(key => {
-      _watchers[key](page);
+  emit(routeInfo) {
+    Object.keys(this._watchers).forEach(key => {
+      this._watchers[key](routeInfo);
     });
-    if (type === 'change') {
-      console.log('history', page);
-    }
+    console.log('history', routeInfo);
   }
 };
 
+/**
+ * 路由
+ * 要添加 hook 支持的话, 那么, 接口的 promiseify 是必须的
+ * 动画估计也要这玩意
+ */
 class Router {
   /**
    * 自增id, 多好啊, 不用造 hash
    */
   _id = 1;
+  /**
+   * beforeEnter 钩子
+   * beforeLeave 钩子
+   */
+  _hooks = {
+    beforeEnter: [],
+    beforeLeave: [],
+  };
   /**
    * 这里是个二维数组
    * [
@@ -49,27 +67,32 @@ class Router {
    * 路由表
    */
   _map = {};
-
+  /**
+   * 反向 patches, 感谢 immer
+   * [https://github.com/immerjs/immer#patches](https://github.com/immerjs/immer#patches)
+   */
   _inverses = [];
-  _patchLen = -1;
+  /**
+   * 添加参数
+   */
   _put(data) {
     if (data) {
       this.db = produce(this.db, draft => {
         Object.assign(draft, data);
       }, (patchs, inversePatchs) => {
         this._inverses.push(...inversePatchs);
-        this._patchLen = this._inverses.length;
       });
-      return this._patchLen - 1;
+      return this._inverses.length - 1;
     }
     return -1;
   }
-  _revert(fromIndex) {
-    if (fromIndex > -1) {
-      const patchs = this._inverses.splice(fromIndex, this._patchLen - fromIndex);
-      console.log(patchs);
+  /**
+   * 根据路由栈, 自动清理db
+   */
+  _revert(revertIndex) {
+    if (revertIndex > -1) {
+      const patchs = this._inverses.splice(revertIndex, this._inverses.length - revertIndex);
       this.db = applyPatches(this.db, patchs)
-      console.log('db', this.db);
     }
   }
   /**
@@ -84,97 +107,142 @@ class Router {
         }
       });
     });
+    console.log(this._history);
     if (page) {
       page.ref = ref;
-    } else {
-      // throw new Error(`挂载页面失败 ${id}`);
     }
+    // 会没有吗? 会的, pop 的时候会触发 pop 掉的 ref, 暂时还不知道为什么
   }
-
-  _find(element) {
-    const navIndex = this._history.findIndex(nav => nav[0].type === element || nav[0].type === this._map[element]);
+  /**
+   * 查找页面所在位置
+   */
+  _find(page) {
+    const navIndex = this._history.findIndex(nav => nav[0].type === page || nav[0].type === this._map[page]);
     return navIndex;
+  }
+  /** 判断当前栈顶页面能否返回 */
+  _canIPop() {
+    const top = this._history[this._history.length - 1][0];
+    const ref = top.ref;
+    const canI = typeof ref.beforeLeave === 'function' ? ref.beforeLeave(top) : Promise.resolve();
+    if (canI && typeof canI.then !== 'function') {
+      reject(`${EXCEPTION.BEFORE_LEAVE_RETURN_NO_PROMISE} | in ${top.name} beforeLeave: () => Promise<any> must return an promise`);
+      throw new Error(`${EXCEPTION.BEFORE_LEAVE_RETURN_NO_PROMISE} | in ${top.name} beforeLeave: () => Promise<any> must return an promise`);
+    }
+    return Promise.all(this._hooks.beforeLeave.map(hook => hook(top).concat(canI)));
   }
   /**
    * 路由数据的一些处理
    */
   db = {};
   /**
-   * 注册路路由表
+   * 注册静态路由表
    * @param {*} path
-   * @param {*} page
+   * @param {*} Page
    */
   registry(path, page) {
     if (this._map[path]) {
-      throw new Error(`Router: 路由注册失败, 已经存在路径重复的路由: $${path}`);
+      throw new Error(`${EXCEPTION.MUTIPLE_ROUTE_PATH} | 路由路径重复: ${path}`);
     }
     this._map[path] = page;
   }
-
-  has(element) {
-    const found = this._find(element) > -1;
+  /**
+   * 全局进入前钩子
+   */
+  beforeEnter(hook) {
+    this._hooks.beforeEnter.push(hook);
+  }
+  /**
+   * 全局离开前钩子
+   */
+  beforeLeave() {
+    this._hooks.beforeLeave.push(hook);
+  }
+  /**
+   * 判断是否存在, 如果存在则返回对应 route
+   * @param {*} route
+   */
+  has(route) {
+    const found = this._find(route) > -1;
     if (found > -1) {
       return this._history[found][0];
     } else {
       return false;
     }
   }
-
-
-  go(element, data) {
-    const found = this._find(element);
+  /**
+   * go 的工作流程稍微有点复杂
+   * 1. 如果在历史中不存在, 就 push
+   * 2. 如果是上一个页面, 就 replace
+   * 3. 如果是更早的页面, 就在当前页判断一下 beforeLeave, 然后 pop 直到那个页面
+   * 所以, 只要能明确使用场景的, 就不要用 go
+   * @param {*} page
+   * @param {*} data
+   */
+  go(page, data) {
+    const found = this._find(page);
     const len = this._history.length;
     if (found === -1) {
-      return this.push(element, data);
+      return this.push(page, data);
     }
     if (found === len - 1) {
-      return this.replace(element, data);
+      return this.replace(page, data);
     }
-    // 找到目标后一个, 然后执行 pop
-    const willpops = this._history.splice(found + 2, len - found);
-
-    willpops.forEach(nav => {
-      if(nav[0].waiting) {
-        // 有在等待的 全部 reject 掉
-        nav[0].waiting.reject('rejected by go');
-      }
-    });
-    // 路由数据清理
-    this._revert(willpops[0][0]._revertIndex);
-    this.pop(data);
-  }
-
-  push(element, data) {
-    this._id++;
-    const page = {
-      id: this._id,
-      name: element && element.name || element.displayName,
-      type: element,
-    };
-
-    /** path 位置存起来 */
-    page._revertIndex = this._put(data);
-    const nowNav = this._history[this._history.length - 1];
-
     return new Promise((resolve, reject) => {
+      this._canIPop().then(() => {
+        /** splice 第二个参数不是很准确, 不过不重要, 反正能截掉 */
+        const willPopNavs = this._history.splice(found + 1, len - found);
+        willPopNavs.forEach(nav => {
+          if(nav[0].waiting) {
+            // 有在等待的 全部 reject 掉
+            nav[0].waiting.reject(`${EXCEPTION.REJECTED_BY_GO} | in ${nav[0].name} `);
+          }
+        });
+        // 路由数据清理
+        this._revert(willPopNavs[0][0]._revertIndex);
+        // 可能有参数, 所以 put 一下
+        this._put(data);
+        const top = this._history[this._history.length - 1][0];
+        // 处理一下 waiting 如果有的话
+        if (top.waiting) {
+          // 等了好久终于等到今天
+          top.waiting.resolve(data);
+        }
+        resolve();
+      }).catch(reject);
+    });
+ }
+
+  push(page, data) {
+    return new Promise((resolve, reject) => {
+      this._id++;
+      const route = {
+        id: this._id,
+        type: page,
+      };
+
       /**
        * 注意 HTML 元素 div/input 也是字符串, 但是我们的页面都是 Page, 所以不做防御
        */
       try {
-        if (typeof element === 'string') {
-          page.element = React.createElement(
-            this._map[element],
+        if (typeof page === 'string') {
+          route.name = this._map[page].name || this._map[page].displayName;
+          route.element = React.createElement(
+            this._map[page],
             {
               key: this._id,
               ref: (ref) => this._ref(this._id, ref),
+              route,
             },
             null);
         } else {
-          page.element = React.createElement(
-            element,
+          route.name = page.name || page.displayName;
+          route.element = React.createElement(
+            page,
             {
               key: this._id,
               ref: (ref) => this._ref(this._id, ref),
+              route,
             },
             null);
         }
@@ -185,137 +253,172 @@ class Router {
       /**
        * 这里有循环引用, 所以如果有需要 toString 需要重写
        */
-      page.router = page;
-      if (nowNav && nowNav[0]) {
-        nowNav[0].waiting = {
-          resolve: (data) => {
-            resolve(data);
-          },
-          reject: (e) => {
-            reject(e)
-          },
+      route.route = route;
+      const nowNav = this._history[this._history.length - 1];
+      const top = nowNav && nowNav[0];
+      if (top) {
+        top.waiting = {
+          resolve,
+          reject,
         };
+        top.ref.onHide();
       }
 
-
-      this._history.push([page]);
-      event.emit('push', page);
-      event.emit('change', this._history);
+      route._revertIndex = this._put(data);
+      /**
+       * 超大问题!!!! 动画跟这也有关系
+       * 应该是先把实例生成了, 然后再判断能不能push
+       */
+      Promise.all(this._hooks.beforeEnter.map(hook => hook(route)))
+        .then(() => {
+          this._history.push([route]);
+          // event.emit('push', route);
+          event.emit(this._history);
+        }).catch(reject)
     });
   }
 
   pop(data) {
-    if (this._history.length > 1) {
-      const prev = this._history[this._history.length - 2][0];
-      const top = this._history[this._history.length - 1][0];
-      const instance = top.ref;
-      const canI = (instance.canI && typeof instance.canI.pop === 'function') ? instance.canI.pop() : Promise.resolve();
-      if (canI && typeof canI.then !== 'function') {
-        throw new Error(`Page ${top.name} canI.pop: () => Promise<any> must return an promise`);
-      }
-      canI.then(() => {
-        this._history.pop();
-        event.emit('pop', top);
-        event.emit('change', this._history);
-        /**
-         * 处理路由数据, 这里有点微妙, 需要好好想想并测试
-         */
-        this._revert(top._revertIndex);
-        this._put(data);
-        if (prev.waiting) {
-          prev.waiting.resolve(data);
-        }
-      });
-    };
-  }
-
-  replace(element, data) {
-    this._id++;
-    const page = {
-      id: this._id,
-      name: element && element.name || element.displayName,
-      type: element,
-    };
-
-    /**
-     * 注意 HTML 元素 div/input 也是字符串, 但是我们的页面都是 Page, 所以不做防御
-     */
-    try {
-      if (typeof element === 'string') {
-        page.element = React.createElement(
-          this._map[element],
-          {
-            key: this._id,
-            ref: (ref) => this._ref(this._id, ref),
-          },
-          null);
+    return new Promise((resolve, reject) => {
+      if (this._history.length > 1) {
+        const prev = this._history[this._history.length - 2][0];
+        const top = this._history[this._history.length - 1][0];
+        this._canIPop().then(() => {
+          this._history.pop();
+          // event.emit('pop', top);
+          event.emit(this._history);
+          /**
+           * 处理路由数据, 这里有点微妙, 需要好好想想并测试
+           */
+          this._revert(top._revertIndex);
+          this._put(data);
+          if (prev.waiting) {
+            prev.waiting.resolve(data);
+            prev.ref.onShow();
+          }
+          resolve();
+        }).catch(reject);
       } else {
-        page.element = React.createElement(
-          element,
-          {
-            key: this._id,
-            ref: (ref) => this._ref(this._id, ref),
-          },
-          null);
+        reject(EXCEPTION.NO_MORE_HISTORY);
       }
-    } catch (e) {
-      throw e;
-    }
-    /**
-     * 这里有循环引用, 所以如果有需要 toString 需要重写
-     */
-    page.router = page;
-    const top = this._history[this._history.length - 1][0];
-    /** 先清理掉之前的数据 */
-    this._revert(top._revertIndex);
-    if (top.waiting) {
-      top.waiting.reject('rejected by replace');
-    }
-    /** 再设置新的数据 */
-    page._revertIndex = this._put(data);
-
-    this._history[this._history.length - 1] = [page];
-    event.emit('replace', page);
-    event.emit('change', this._history);
+    })
   }
 
-  popup(element) {
+  replace(page, data) {
+    return new Promise((resolve, reject) => {
+      this._id++;
+      const route = {
+        id: this._id,
+        type: page,
+      };
+
+      /**
+       * 注意 HTML 元素 div/input 也是字符串, 但是我们的页面都是 Page, 所以不做防御
+       */
+      try {
+        if (typeof page === 'string') {
+          route.name = this._map[page].name || this._map[page].displayName;
+          route.element = React.createElement(
+            this._map[page],
+            {
+              key: this._id,
+              ref: (ref) => this._ref(this._id, ref),
+              route,
+            },
+            null);
+        } else {
+          route.name = page.name || page.displayName;
+          route.element = React.createElement(
+            page,
+            {
+              key: this._id,
+              ref: (ref) => this._ref(this._id, ref),
+              route,
+            },
+            null);
+        }
+      } catch (e) {
+        reject(e);
+        throw e;
+      }
+      /**
+       * 这里有循环引用, 所以如果有需要 toString 需要重写
+       */
+      route.route = route;
+      const top = this._history[this._history.length - 1][0];
+      /** 先清理掉之前的数据 */
+      this._revert(top._revertIndex);
+      if (top.waiting) {
+        top.waiting.reject(`${EXCEPTION.REJECTED_BY_REPLACE} | in ${top.name}`);
+      }
+      /** 再设置新的数据 */
+      route._revertIndex = this._put(data);
+
+      this._history[this._history.length - 1] = [route];
+      // event.emit('replace', route);
+      event.emit(this._history);
+      resolve();
+    });
+  }
+
+  popup(over) {
     this._id++;
-    const over = {
+    const route = {
       id: this._id,
-      name: element.name || element.displayName,
-      type: element,
+      name: typeof over === 'string' ? over : over && over.name || over.displayName,
+      type: over,
       element: React.createElement(
-        element,
+        over,
         {
           key: this._id,
+          route,
         },
         null
       ),
     };
 
-    const top = this._history[this._history.length - 1][0];
+    const topNav = this._history[this._history.length - 1];
     /**
      * 弹窗层的 router, 很显然, 是当前 Page
      */
-    over.router = top;
+    route.route = topNav[0];
 
-    top.push(over);
-    event.emit('popup', over);
-    event.emit('change', this._history);
+    topNav.push(route);
+    // event.emit('popup', route);
+    event.emit(this._history);
   }
 
   dismiss() {
-    const top = this._history[this._history.length - 1];
+    const topNav = this._history[this._history.length - 1];
     // 有弹窗的时候才删除, 否则, 不触发
-    if (top.length > 1) {
-      const dismissed = top.splice(this._history.length - 1, 1);
-      event.emit('dismiss', dismissed[0]);
-      event.emit('change', this._history);
+    if (topNav.length > 1) {
+      const dismissed = topNav.splice(topNav.length - 1, 1);
+      // event.emit('dismiss', dismissed[0]);
+      event.emit(this._history);
     }
   }
 }
 
 const router = new Router();
+
+/**
+ * 处理 app 状态
+ */
+let appState = 'active';
+AppState.addEventListener('change', (state) => {
+  const topNav = router._history[router._history.length - 1];
+  const top = topNav && topNav[0];
+  if (top && top.ref) {
+    if (appState.match(/inactive|background/) && state === 'active') {
+      // onShow
+      top.ref.onShow();
+    }
+    if (appState === 'active' && state.match(/inactive|background/)) {
+      // onHide
+      top.ref.onHide();
+    }
+  }
+  appState = state;
+});
 
 export default router;

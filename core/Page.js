@@ -5,18 +5,55 @@ import Layer from './Layer';
 const noop = () => {};
 const { Provider, Consumer} = createContext({});
 
-export const PageConsumer = Consumer;
+export class PageLife extends PureComponent {
+
+  linked = false;
+
+  link = (ref) => {
+    if (this.linked || !ref) return;
+    const { onShow, onHide } = this.props;
+    if (onShow !== undefined && typeof onShow !== 'function') {
+      throw new Error('<PageLife onShow={fn}> onShow must be an function');
+    }
+    if (onHide !== undefined && typeof onHide !== 'function') {
+      throw new Error('<PageLife onHide={fn}> onHide must be an function');
+    }
+    if (ref) {
+      ref._hooks.onShow.push(onShow);
+      ref._hooks.onHide.push(onHide);
+      this.linked = true;
+    }
+  }
+
+  renderProps = ({ route, ref}) => {
+    const { children } = this.props;
+    this.link(ref);
+    return children;
+  }
+
+  render() {
+    return <Consumer>
+      {this.renderProps}
+    </Consumer>
+  }
+};
 
 class Page extends PureComponent {
   constructor(props) {
     super(props);
-    this.boxIt();
+    this._boxIt();
     this.route = this.props.route;
   }
 
-  boxIt() {
+  /** 给页面内组件用的 */
+  _hooks = {
+    onShow: [],
+    onHide: [],
+  }
+
+  _boxIt() {
     this._originOnShow = this._originOnHide = this._originRender = noop;
-    this.originCanIPop = Promise.resolve;
+    this._originBeforeLeave = Promise.resolve;
 
     if (this.componentDidMount && this.componentDidMount !== this._boxDidMount) {
       this._originComponentDidMount = this.componentDidMount;
@@ -30,24 +67,22 @@ class Page extends PureComponent {
       this._originRender = this.render;
       this.render = this._boxRender;
     }
-    if (this.onShow && this.onShow !== this._boxOnShow) {
-      this._originOnShow = this.onShow;
+    if (this.onShow !== this._boxOnShow) {
+      this._originOnShow = typeof this.onShow === 'function' ? this.onShow : noop;
       this.onShow = this._boxOnShow;
     }
-    if (this.onHide && this.onHide !== this._boxOnHide) {
-      this._originOnHide = this.onHide;
+    if (this.onHide !== this._boxOnHide) {
+      this._originOnHide = typeof this.onHide === 'function' ? this.onHide : noop;
       this.onHide = this._boxOnHide;
     }
-    if (this.canI && this.canI.pop && this.canI.pop !== this._boxCanI.pop) {
-      this._originCanIPop = this.canI.pop.bind(this);
-      this.canI.pop = this._boxCanI.pop;
+    if (this.beforeLeave && this.beforeLeave !== this._boxBeforeLeave) {
+      this._originBeforeLeave = this.beforeLeave.bind(this);
+      this.beforeLeave = this._boxBeforeLeave;
     }
   }
 
-  _boxCanI = {
-    pop() {
-      return this._originCanIPop();
-    }
+  _boxBeforeLeave(route) {
+    return this._originBeforeLeave(route);
   }
 
   _boxDidMount() {
@@ -63,7 +98,7 @@ class Page extends PureComponent {
   _boxRender() {
     const { route } = this;
     return <Layer>
-      <Provider value={route}>
+      <Provider value={{ ref: this, route }}>
         {this._originRender()}
       </Provider>
     </Layer>
@@ -71,10 +106,12 @@ class Page extends PureComponent {
 
   _boxOnShow() {
     this._originOnShow();
+    this._hooks.onShow.forEach(fn => fn(this));
   }
 
   _boxOnHide() {
     this._originOnHide();
+    this._hooks.onHide.forEach(fn => fn(this));
   }
 
 }

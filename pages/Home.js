@@ -19,7 +19,7 @@ class Home extends Page {
   }
 
   onHide() {
-    // console.log('home hide this', this);
+    console.log('home hide this', this);
   }
 
   componentDidMount() {
