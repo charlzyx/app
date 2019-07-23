@@ -1,5 +1,5 @@
 import React, { Component } from 'react';
-import { View } from 'react-native';
+import { View, Animated } from 'react-native';
 
 const colorful = () => {
     const rr = Math.floor(Math.random() * 255);
@@ -22,8 +22,10 @@ const css = {
 
 class Layer extends Component {
   render() {
-    const { children, style, ...others } = this.props;
-    return <View {...others} style={[css.cover, { backgroundColor: colorful() }, style ]}>
+    const { children, style, animated, ...others } = this.props;
+    return animated ? <Animated.View {...others} style={[css.cover, { backgroundColor: colorful() }, style]}>
+      {children}
+    </Animated.View>: <View {...others} style={[css.cover, { backgroundColor: colorful() }, style ]}>
       {children}
     </View>
   }

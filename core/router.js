@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 import produce, { applyPatches } from 'immer';
 
 
+const ANIMATE_DURATION = 233;
+
 const EXCEPTION = {
   // 没有路由历史
   NO_MORE_HISTORY: 'NO_MORE_HISTORY',
@@ -37,6 +39,10 @@ export const event = {
     console.log('history', routeInfo);
   }
 };
+
+const wait = (time) => new Promise(resolve => {
+  setTimeout(resolve, time);
+});
 
 /**
  * 路由
@@ -284,19 +290,24 @@ class Router {
         const prev = this._history[this._history.length - 2][0];
         const top = this._history[this._history.length - 1][0];
         this._canIPop().then(() => {
-          this._history.pop();
-          // event.emit('pop', top);
-          event.emit(this._history);
-          /**
-           * 处理路由数据, 这里有点微妙, 需要好好想想并测试
-           */
-          this._revert(top._revertIndex);
-          this._put(data);
-          if (prev.waiting) {
-            prev.waiting.resolve(data);
-            prev.ref.onShow();
+          if (top.ref) {
+            top.ref._animatingLeave(ANIMATE_DURATION);
           }
-          resolve();
+          wait(ANIMATE_DURATION).then(() => {
+            this._history.pop();
+            // event.emit('pop', top);
+            event.emit(this._history);
+            /**
+             * 处理路由数据, 这里有点微妙, 需要好好想想并测试
+             */
+            this._revert(top._revertIndex);
+            this._put(data);
+            if (prev.waiting) {
+              prev.waiting.resolve(data);
+              prev.ref.onShow();
+            }
+            resolve();
+          })
         }).catch(reject);
       } else {
         reject(EXCEPTION.NO_MORE_HISTORY);

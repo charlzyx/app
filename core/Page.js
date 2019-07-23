@@ -1,16 +1,25 @@
 import React, { PureComponent, createContext } from 'react';
-import Layer from './Layer';
+import { Animated, Dimensions }  from 'react-native';
+import Layer from '../core/Layer';
 
+
+const { height, width } = Dimensions.get('window')
+
+const ANIMATE_DURATION = 233;
 
 const noop = () => {};
 const { Provider, Consumer} = createContext({});
+let hookId = 1;
 
 export class PageLife extends PureComponent {
 
   linked = false;
+  hookIds = [];
+  pageRef = null;
 
   link = (ref) => {
     if (this.linked || !ref) return;
+    this.pageRef = ref;
     const { onShow, onHide } = this.props;
     if (onShow !== undefined && typeof onShow !== 'function') {
       throw new Error('<PageLife onShow={fn}> onShow must be an function');
@@ -19,10 +28,24 @@ export class PageLife extends PureComponent {
       throw new Error('<PageLife onHide={fn}> onHide must be an function');
     }
     if (ref) {
-      ref._hooks.onShow.push(onShow);
-      ref._hooks.onHide.push(onHide);
+      if (onShow) {
+        this.hookIds.push(hookId);
+        ref._hooks.onShow[hookId++] = onShow;
+      }
+      if (onHide) {
+        this.hookIds.push(hookId);
+        ref._hooks.onHide[hookId++] = onHide;
+      }
       this.linked = true;
     }
+  }
+
+  componentWillUnmount() {
+    if (!this.pageRef) return;
+    this.hookIds.forEach(id => {
+      delete this.pageRef._hooks.onShow[id];
+      delete this.pageRef._hooks.onHide[id];
+    });
   }
 
   renderProps = ({ route, ref}) => {
@@ -43,12 +66,55 @@ class Page extends PureComponent {
     super(props);
     this._boxIt();
     this.route = this.props.route;
+    this.state = {
+      translateX: new Animated.Value(width * 0.6),  // 透明度初始值设为0
+      opacity: new Animated.Value(0),
+    }
   }
 
   /** 给页面内组件用的 */
   _hooks = {
-    onShow: [],
-    onHide: [],
+    onShow: {},
+    onHide: {},
+  }
+
+  _animatingEnter = () => {
+    Animated.timing(                  // 随时间变化而执行动画
+      this.state.opacity,            // 动画中的变量值
+      {
+        toValue: 1,                   // 透明度最终变为1，即完全不透明
+        duration: ANIMATE_DURATION ,              // 让动画持续一段时间
+        // useNativeDriver: true,
+      }
+    ).start();
+    Animated.timing(                  // 随时间变化而执行动画
+      this.state.translateX,            // 动画中的变量值
+      {
+        toValue: 0,                   // 透明度最终变为1，即完全不透明
+        duration: ANIMATE_DURATION ,              // 让动画持续一段时间
+        // useNativeDriver: true,
+      }
+    ).start();
+  }
+
+  _animatingLeave = (duration) => {
+    console.log('animatingLeave');
+    Animated.timing(                  // 随时间变化而执行动画
+      this.state.opacity,            // 动画中的变量值
+      {
+        toValue: 0,                   // 透明度最终变为1，即完全不透明
+        duration,              // 让动画持续一段时间
+        // useNativeDriver: true,
+      }
+    ).start();
+    Animated.timing(                  // 随时间变化而执行动画
+      this.state.translateX,            // 动画中的变量值
+      {
+        toValue: width * 0.6,                   // 透明度最终变为1，即完全不透明
+        duration,              // 让动画持续一段时间
+        // useNativeDriver: true,
+      }
+    ).start()
   }
 
   _boxIt() {
@@ -88,6 +154,7 @@ class Page extends PureComponent {
   _boxDidMount() {
     this._originComponentDidMount();
     this._boxOnShow();
+    this._animatingEnter();
   }
 
   _boxWillUnmount() {
@@ -97,7 +164,13 @@ class Page extends PureComponent {
 
   _boxRender() {
     const { route } = this;
-    return <Layer>
+    const { translateX, opacity } = this.state;
+    return <Layer
+      animated
+      style={{
+        opacity,
+        transform: [{ translateX } ]
+      }}>
       <Provider value={{ ref: this, route }}>
         {this._originRender()}
       </Provider>
@@ -106,12 +179,18 @@ class Page extends PureComponent {
 
   _boxOnShow() {
     this._originOnShow();
-    this._hooks.onShow.forEach(fn => fn(this));
+    const onShowMap = this._hooks.onShow;
+    Object.keys(onShowMap).forEach(key => {
+      onShowMap[key](this.route);
+    });
   }
 
   _boxOnHide() {
     this._originOnHide();
-    this._hooks.onHide.forEach(fn => fn(this));
+    const onHideMap = this._hooks.onHide;
+    Object.keys(onHideMap).forEach(key => {
+      onHideMap[key](this.route);
+    });
   }
 
 }
