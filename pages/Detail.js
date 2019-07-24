@@ -26,6 +26,10 @@ class Detail extends Page {
     </Cover>)
   }
 
+  pushDetail = () => {
+    R.push(Detail)
+  }
+
   dismiss = () => {
     R.dismiss();
   }
@@ -59,13 +63,15 @@ class Detail extends Page {
         <Text>pop</Text>
       </TouchableOpacity>
 
-      <Text>Detail</Text>
-      <Text>Detail</Text>
-      <Text>Detail</Text>
-      <Text>Detail</Text>
-      <Text>Detail</Text>
-      <Text>Detail</Text>
-      <Text>Detail</Text>
+      <TouchableOpacity onPress={this.pushDetail}>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+        <Text>Detail</Text>
+     </TouchableOpacity>
       <TouchableOpacity onPress={this.gotoHome}>
         <Text>Home</Text>
         <Text>Home</Text>

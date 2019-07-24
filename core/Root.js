@@ -19,7 +19,7 @@ class Root extends PureComponent {
       history: [],
     }
 
-    this.eventId = event.on(this.onChange);
+    this.eventId = R.listen(this.onChange);
   }
 
   onChange = (history) => {
@@ -28,7 +28,7 @@ class Root extends PureComponent {
   }
 
   componentWillUnmount() {
-    event.off(this.eventId);
+    R.unlisten(this.eventId);
   }
 
   render() {

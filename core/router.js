@@ -3,41 +3,18 @@ import { AppState } from 'react-native';
 import produce, { applyPatches } from 'immer';
 
 
-const ANIMATE_DURATION = 233;
-
-const EXCEPTION = {
-  // 没有路由历史
-  NO_MORE_HISTORY: 'NO_MORE_HISTORY',
-  // 被 go 里面强行 splice 掉的
-  REJECTED_BY_GO: 'REJECTED_BY_GO',
-  // 被 replace 强行替换掉的
-  REJECTED_BY_REPLACE: 'REJECTED_BY_GO',
-  // 被 Page 里面的 beforeLeave reject 掉的
-  BEFORE_LEAVE_RETURN_NO_PROMISE: 'BEFORE_LEAVE_RETURN_NO_PROMISE',
-  // 路由 path 重复
-  MUTIPLE_ROUTE_PATH: 'MUTIPLE_ROUTE_PATH',
-};
-
 /**
- * 路由事件管理器
+ * 路由能出来的所有异常
  */
-export const event = {
-  _id: 1,
-  _watchers: {},
-  on(cb) {
-    this._id++;
-    this._watchers[this._id] = cb;
-    return `${this._id}`;
-  },
-  off(id) {
-    delete this._watchers[id];
-  },
-  emit(routeInfo) {
-    Object.keys(this._watchers).forEach(key => {
-      this._watchers[key](routeInfo);
-    });
-    console.log('history', routeInfo);
-  }
+const EXCEPTION = {
+  NO_MORE_HISTORY: '历史记录长度小于1',
+  REJECTED_BY_GO: '被 go 直接splice掉了',
+  REJECTED_BY_REPLACE: '被 replace 掉了',
+  BEFORE_LEAVE_RETURN_NO_PROMISE: '页面中 beforeLeave 钩子的返回值不是 Promise, 期望: (route) => Promise<any>',
+  BEFORE_ENTER_RETURN_NO_PROMISE: '页面中 beforeEnter 钩子的返回值不是 Promise, 期望: (route) => Promise<any>',
+  MUTIPLE_ROUTE_PATH: '静态路由表存在重复 path',
+  WAITING_NEXT_REF_TIME_OUT: '等待页面挂载(ref)超时(500ms)',
+  PAGE_NOT_FOUND: '未注册的页面'
 };
 
 const wait = (time) => new Promise(resolve => {
@@ -45,42 +22,66 @@ const wait = (time) => new Promise(resolve => {
 });
 
 /**
- * 路由
- * 要添加 hook 支持的话, 那么, 接口的 promiseify 是必须的
- * 动画估计也要这玩意
+ * core / 路由
  */
 class Router {
-  /**
-   * 自增id, 多好啊, 不用造 hash
-   */
+  /** 自增id, 多好啊, 不用造 hash */
   _id = 1;
+  /** 监听事件自增id */
+  _listenId = 1;
+  /** 监听者们 */
+  _listeners = {};
+  /** 注册监听 */
+  listen(fn) {
+    this._listenId++;
+    this._listeners[this._listenId] = fn;
+    return this._listenId;
+  }
+  /** 注销监听 */
+  unlisten(id) {
+    delete this._listeners[id];
+  }
+  /** 触发路由变更监听函数 */
+  _emit(history) {
+    Object.keys(this._listeners).forEach(id => {
+      this._listeners[id](history);
+    });
+  }
   /**
-   * beforeEnter 钩子
-   * beforeLeave 钩子
+   * 全局钩子
+   *   Enter
+   *   Leave
    */
   _hooks = {
     beforeEnter: [],
     beforeLeave: [],
   };
-  /**
-   * 这里是个二维数组
-   * [
-   *  [Page, Over?, ...]
-   * ]
-   */
-  _history = [];
-  /**
-   * 路由表
-   */
+
+  /** 注册全局进入前钩子 */
+  beforeEnter(hook) {
+    this._hooks.beforeEnter.push(hook);
+  }
+  /** 注册全局离开前钩子 */
+  beforeLeave(hook) {
+    this._hooks.beforeLeave.push(hook);
+  }
+  /** 静态路由表 */
   _map = {};
+  /** 注册静态路由表 */
+  registry(path, page) {
+    if (this._map[path]) {
+      throw new Error(`${EXCEPTION.MUTIPLE_ROUTE_PATH}|${path}`);
+    }
+    this._map[path] = page;
+  }
+  /** 路由数据 */
+  db = {};
   /**
-   * 反向 patches, 感谢 immer
+   * 数据操作记录; 反向 patches, 感谢 immer
    * [https://github.com/immerjs/immer#patches](https://github.com/immerjs/immer#patches)
    */
   _inverses = [];
-  /**
-   * 添加参数
-   */
+  /** 追加路由数据 */
   _put(data) {
     if (data) {
       this.db = produce(this.db, draft => {
@@ -92,90 +93,262 @@ class Router {
     }
     return -1;
   }
-  /**
-   * 根据路由栈, 自动清理db
-   */
+  /** 自动清理路由数据 */
   _revert(revertIndex) {
     if (revertIndex > -1) {
       const patchs = this._inverses.splice(revertIndex, this._inverses.length - revertIndex);
       this.db = applyPatches(this.db, patchs)
     }
   }
-  /**
-   * 收集实例, 用来触发 onShow, onHide 钩子用
-   */
+  /** 历史栈, 核心数据 */
+  _history = [];
+  /** 离开动画时长 */
+  animateDuration = 233;
+  /** 实例Map, 方便一些操作 */
+  _refMap = {};
+  /** 挂载实例, 用来触发 onShow, onHide 钩子用 */
   _ref(id, ref) {
     let page = null;
     this._history.forEach(nav => {
-      nav.forEach(p => {
-        if (p.id === id) {
-          page = p;
-        }
-      });
+      if (nav[0].id === id) {
+        page = nav[0];
+      }
     });
-    console.log(this._history);
     if (page) {
       page.ref = ref;
+      this._refMap[id] = ref;
     }
     // 会没有吗? 会的, pop 的时候会触发 pop 掉的 ref, 暂时还不知道为什么
   }
-  /**
-   * 查找页面所在位置
-   */
-  _find(page) {
+  /** 查找页面所在 Nav 索引位置 */
+  _findNavIndex(page) {
     const navIndex = this._history.findIndex(nav => nav[0].type === page || nav[0].type === this._map[page]);
     return navIndex;
   }
+  /** 等待给定id 挂载完毕 */
+  _waitingRef(id, begin = +new Date()) {
+    return new Promise((resolve, reject) => {
+      if (this._refMap[id]) {
+        resolve(this._refMap[id]);
+      } else if (+new Date() - begin > 500) {
+        const nav = this._history.find(nav => nav[0].id === id);
+        reject(`${EXCEPTION.WAITING_NEXT_REF_TIME_OUT} at: ${nav[0].name}`);
+      } else {
+        wait(64).then(() => {
+          this._waitingRef(id, begin).then(resolve).catch(reject);
+        });
+      }
+    });
+  }
   /** 判断当前栈顶页面能否返回 */
-  _canIPop() {
+  _canLeave() {
     const top = this._history[this._history.length - 1][0];
     const ref = top.ref;
-    const canI = typeof ref.beforeLeave === 'function' ? ref.beforeLeave(top) : Promise.resolve();
+    const canI = ref.beforeLeave(top);
     if (canI && typeof canI.then !== 'function') {
-      reject(`${EXCEPTION.BEFORE_LEAVE_RETURN_NO_PROMISE} | in ${top.name} beforeLeave: () => Promise<any> must return an promise`);
-      throw new Error(`${EXCEPTION.BEFORE_LEAVE_RETURN_NO_PROMISE} | in ${top.name} beforeLeave: () => Promise<any> must return an promise`);
+      reject(`${EXCEPTION.BEFORE_LEAVE_RETURN_NO_PROMISE} at: ${top.name}`);
+    } else {
+      const hooks = this._hooks.beforeLeave.map(hook => hook(top)).concat(canI);
+      return Promise.all(hooks);
     }
-    return Promise.all(this._hooks.beforeLeave.map(hook => hook(top).concat(canI)));
   }
-  /**
-   * 路由数据的一些处理
-   */
-  db = {};
-  /**
-   * 注册静态路由表
-   * @param {*} path
-   * @param {*} Page
-   */
-  registry(path, page) {
-    if (this._map[path]) {
-      throw new Error(`${EXCEPTION.MUTIPLE_ROUTE_PATH} | 路由路径重复: ${path}`);
-    }
-    this._map[path] = page;
-  }
-  /**
-   * 全局进入前钩子
-   */
-  beforeEnter(hook) {
-    this._hooks.beforeEnter.push(hook);
-  }
-  /**
-   * 全局离开前钩子
-   */
-  beforeLeave() {
-    this._hooks.beforeLeave.push(hook);
-  }
-  /**
-   * 判断是否存在, 如果存在则返回对应 route
-   * @param {*} route
-   */
+  /** 判断是否存在, 如果存在则返回对应 route */
   has(route) {
-    const found = this._find(route) > -1;
+    const found = this._findNavIndex(route) > -1;
     if (found > -1) {
       return this._history[found][0];
     } else {
       return false;
     }
   }
+  /** 新增一个页面, push到历史栈顶 */
+  push(page, data) {
+    return new Promise((resolve, reject) => {
+      /**
+       * 存一下当前栈顶页面
+       */
+      const topNav = this._history[this._history.length - 1];
+      const top = topNav && topNav[0];
+      /** id 自增 */
+      this._id++;
+      const type = this._map[page] || page;
+      if (!type) {
+        reject(`${EXCEPTION.PAGE_NOT_FOUND} ${page}`)
+      }
+      /**
+       * 关联 id 和 type,
+       * 需要注意的是: ref 则是在页面挂载之后才会有
+       */
+      const route = {
+        id: this._id,
+        type,
+        ref: null,
+        name: type.name || type.displayName || page.toString(),
+        element: null
+      };
+
+      /** 生成 element, 添加 name */
+      try {
+        route.element = React.createElement(
+          type,
+          {
+            key: this._id,
+            ref: (ref) => this._ref(this._id, ref),
+            route,
+          },
+          null);
+      } catch (e) {
+        reject(e);
+        throw e;
+      }
+
+      /**
+       * 先直接 push, 反正也可见(通过初始 transform 来控制)
+       */
+      this._history.push([route]);
+      this._emit(this._history)
+
+     /**
+       * 等待页面刷新挂载完成, 0 不太靠谱, 此处应有 loop
+       */
+      this._waitingRef(route.id).then((nextRef) => {
+        /**
+         * 钩子走起来
+         */
+        const canI = nextRef.beforeEnter(route);
+        if (canI && typeof canI.then !== 'function') {
+          reject(`${EXCEPTION.BEFORE_ENTER_RETURN_NO_PROMISE} at: ${route.name}`);
+        }
+        const enterHooks = this._hooks.beforeEnter.map(hook => hook(route)).concat(canI);
+        Promise.all(enterHooks).then((wtf) => {
+           /**
+            * 触发当前页面的 onHide
+            */
+           if (top) {
+              top.waiting = {
+                resolve,
+                reject,
+              };
+              top.ref.onHide();
+              /**
+               * 存储当前页面的  revertIndex
+               */
+              top._revertIndex = this._put(data);
+            }
+            /** 触发新页面 Show */
+            nextRef.onShow();
+            /** 触发新页面的入场动画  */
+            nextRef._animatingEnter();
+           /** well done! */
+            resolve();
+          }).catch((e) => {
+            /**
+             * 钩子不给过, 就撤销push操作就行了
+             */
+            this._history.pop();
+            this._emit(this._history);
+            reject(e);
+          })
+      }).catch(reject);
+    });
+  }
+
+  /** 弹出当前栈顶元素 */
+  pop(data) {
+    return new Promise((resolve, reject) => {
+      if (this._history.length > 1) {
+        const prev = this._history[this._history.length - 2][0];
+        const top = this._history[this._history.length - 1][0];
+        this._canLeave().then(() => {
+          if (top.ref) {
+            /** 触发当前页面离开动画 */
+            top.ref._animatingLeave();
+            /** 触发当前页面 Hide 钩子 */
+            top.ref.onHide();
+          }
+
+          /** 等待动画完成 */
+          wait(this.animateDuration).then(() => {
+            /** 先处理数据 */
+            this._revert(top._revertIndex);
+            this._put(data);
+            /** 操作路由栈 */
+            this._history.pop();
+            this._emit(this._history);
+            /** 处理 promise */
+            if (prev.waiting) prev.waiting.resolve(data);
+            prev.ref.onShow();
+            resolve();
+          });
+        }).catch(reject);
+      } else {
+        reject(EXCEPTION.NO_MORE_HISTORY);
+      }
+    })
+  }
+
+  /** 直接替换当前栈顶页面 */
+  replace(page, data) {
+    return new Promise((resolve, reject) => {
+      this._id++;
+
+      const type = this._map[page] || page;
+      if (!type) {
+        reject(`${EXCEPTION.PAGE_NOT_FOUND} ${page}`)
+      }
+      /**
+       * 关联 id 和 type,
+       * 需要注意的是: ref 则是在页面挂载之后才会有
+       */
+      const route = {
+        id: this._id,
+        type,
+        ref: null,
+        name: type.name || type.displayName || page,
+        element: null
+      };
+
+      /** 生成 element, 添加 name */
+      try {
+        route.element = React.createElement(
+          type,
+          {
+            key: this._id,
+            ref: (ref) => this._ref(this._id, ref),
+            route,
+          },
+          null);
+      } catch (e) {
+        reject(e);
+        throw e;
+      }
+
+      const top = this._history[this._history.length - 1][0];
+     /** reject 掉top页面push的 promise */
+      if (top.waiting) top.waiting.reject(`${EXCEPTION.REJECTED_BY_REPLACE} | in ${top.name}`);
+      /** 触发 onHide 钩子 */
+      top.ref.onHide();
+
+      /** 先清理掉之前的数据 */
+      this._revert(top._revertIndex);
+      /** 再设置新的数据 */
+      route._revertIndex = this._put(data);
+
+      /** 替换路由 */
+      this._history[this._history.length - 1] = [route];
+      this._emit(this._history);
+
+      /** 等待挂载完成 */
+      this._waitingRef(route.id).then((nextRef) => {
+        /** 触发新页面 Show */
+        nextRef.onShow();
+        /** 触发新页面的入场动画  */
+        nextRef._animatingEnter();
+        resolve();
+      }).catch(reject);
+    });
+  }
+
   /**
    * go 的工作流程稍微有点复杂
    * 1. 如果在历史中不存在, 就 push
@@ -186,7 +359,7 @@ class Router {
    * @param {*} data
    */
   go(page, data) {
-    const found = this._find(page);
+    const found = this._findNavIndex(page);
     const len = this._history.length;
     if (found === -1) {
       return this.push(page, data);
@@ -195,183 +368,43 @@ class Router {
       return this.replace(page, data);
     }
     return new Promise((resolve, reject) => {
-      this._canIPop().then(() => {
-        /** splice 第二个参数不是很准确, 不过不重要, 反正能截掉 */
-        const willPopNavs = this._history.splice(found + 1, len - found);
+      const topNav = this._history[len - 1];
+      const top = topNav[0];
+      this._canLeave().then(() => {
+        // 执行 top 离开动画
+        top.ref._animatingLeave();
+        top.ref.onHide();
+        /** 顶层页面不进行删除, 但是无情的删掉中间所有页面 */
+        /** 触发成吨的动画, 不知道有没有性能问题? 果然啊, 有问题, 所以现在是只对最顶层做动画 */
+        const willPopNavs = this._history.splice(found + 1, len - (found + 1 + 1));
         willPopNavs.forEach(nav => {
-          if(nav[0].waiting) {
-            // 有在等待的 全部 reject 掉
-            nav[0].waiting.reject(`${EXCEPTION.REJECTED_BY_GO} | in ${nav[0].name} `);
-          }
+          const now = nav[0];
+          // 有在等待的 全部 reject 掉, 并触发onHide
+          if (now.waiting) now.waiting.reject(`${EXCEPTION.REJECTED_BY_GO} | in ${nav[0].name} `);
+          now.ref.onHide();
         });
         // 路由数据清理
         this._revert(willPopNavs[0][0]._revertIndex);
-        // 可能有参数, 所以 put 一下
-        this._put(data);
-        const top = this._history[this._history.length - 1][0];
-        // 处理一下 waiting 如果有的话
-        if (top.waiting) {
+        this._emit(this._history);
+
+        /** 等待动画完成 */
+        wait(this.animateDuration).then(() => {
+          // 移除动画的那个页面
+          this._history.pop();
+          // 可能有参数, 所以 put 一下
+          this._put(data);
+          const next = this._history[this._history.length - 1][0];
           // 等了好久终于等到今天
-          top.waiting.resolve(data);
-        }
-        resolve();
+          if (next.waiting) next.waiting.resolve(data);
+          // 触发这个页面的 onShow
+          next.ref.onShow();
+          this._emit(this._history);
+          resolve();
+        });
       }).catch(reject);
     });
- }
-
-  push(page, data) {
-    return new Promise((resolve, reject) => {
-      this._id++;
-      const route = {
-        id: this._id,
-        type: page,
-      };
-
-      /**
-       * 注意 HTML 元素 div/input 也是字符串, 但是我们的页面都是 Page, 所以不做防御
-       */
-      try {
-        if (typeof page === 'string') {
-          route.name = this._map[page].name || this._map[page].displayName;
-          route.element = React.createElement(
-            this._map[page],
-            {
-              key: this._id,
-              ref: (ref) => this._ref(this._id, ref),
-              route,
-            },
-            null);
-        } else {
-          route.name = page.name || page.displayName;
-          route.element = React.createElement(
-            page,
-            {
-              key: this._id,
-              ref: (ref) => this._ref(this._id, ref),
-              route,
-            },
-            null);
-        }
-      } catch (e) {
-        reject(e);
-        throw e;
-      }
-      /**
-       * 这里有循环引用, 所以如果有需要 toString 需要重写
-       */
-      route.route = route;
-      const nowNav = this._history[this._history.length - 1];
-      const top = nowNav && nowNav[0];
-      if (top) {
-        top.waiting = {
-          resolve,
-          reject,
-        };
-        top.ref.onHide();
-      }
-
-      route._revertIndex = this._put(data);
-      /**
-       * 超大问题!!!! 动画跟这也有关系
-       * 应该是先把实例生成了, 然后再判断能不能push
-       */
-      Promise.all(this._hooks.beforeEnter.map(hook => hook(route)))
-        .then(() => {
-          this._history.push([route]);
-          // event.emit('push', route);
-          event.emit(this._history);
-        }).catch(reject)
-    });
   }
-
-  pop(data) {
-    return new Promise((resolve, reject) => {
-      if (this._history.length > 1) {
-        const prev = this._history[this._history.length - 2][0];
-        const top = this._history[this._history.length - 1][0];
-        this._canIPop().then(() => {
-          if (top.ref) {
-            top.ref._animatingLeave(ANIMATE_DURATION);
-          }
-          wait(ANIMATE_DURATION).then(() => {
-            this._history.pop();
-            // event.emit('pop', top);
-            event.emit(this._history);
-            /**
-             * 处理路由数据, 这里有点微妙, 需要好好想想并测试
-             */
-            this._revert(top._revertIndex);
-            this._put(data);
-            if (prev.waiting) {
-              prev.waiting.resolve(data);
-              prev.ref.onShow();
-            }
-            resolve();
-          })
-        }).catch(reject);
-      } else {
-        reject(EXCEPTION.NO_MORE_HISTORY);
-      }
-    })
-  }
-
-  replace(page, data) {
-    return new Promise((resolve, reject) => {
-      this._id++;
-      const route = {
-        id: this._id,
-        type: page,
-      };
-
-      /**
-       * 注意 HTML 元素 div/input 也是字符串, 但是我们的页面都是 Page, 所以不做防御
-       */
-      try {
-        if (typeof page === 'string') {
-          route.name = this._map[page].name || this._map[page].displayName;
-          route.element = React.createElement(
-            this._map[page],
-            {
-              key: this._id,
-              ref: (ref) => this._ref(this._id, ref),
-              route,
-            },
-            null);
-        } else {
-          route.name = page.name || page.displayName;
-          route.element = React.createElement(
-            page,
-            {
-              key: this._id,
-              ref: (ref) => this._ref(this._id, ref),
-              route,
-            },
-            null);
-        }
-      } catch (e) {
-        reject(e);
-        throw e;
-      }
-      /**
-       * 这里有循环引用, 所以如果有需要 toString 需要重写
-       */
-      route.route = route;
-      const top = this._history[this._history.length - 1][0];
-      /** 先清理掉之前的数据 */
-      this._revert(top._revertIndex);
-      if (top.waiting) {
-        top.waiting.reject(`${EXCEPTION.REJECTED_BY_REPLACE} | in ${top.name}`);
-      }
-      /** 再设置新的数据 */
-      route._revertIndex = this._put(data);
-
-      this._history[this._history.length - 1] = [route];
-      // event.emit('replace', route);
-      event.emit(this._history);
-      resolve();
-    });
-  }
-
+  /** 在当前页面弹出弹层, 不会产生页面记录, 但也会触发 history 变更 */
   popup(over) {
     this._id++;
     const route = {
@@ -395,17 +428,16 @@ class Router {
     route.route = topNav[0];
 
     topNav.push(route);
-    // event.emit('popup', route);
-    event.emit(this._history);
+    this._emit(this._history);
   }
 
+  /** 取消当前最顶层弹出层 */
   dismiss() {
     const topNav = this._history[this._history.length - 1];
     // 有弹窗的时候才删除, 否则, 不触发
     if (topNav.length > 1) {
-      const dismissed = topNav.splice(topNav.length - 1, 1);
-      // event.emit('dismiss', dismissed[0]);
-      event.emit(this._history);
+      topNav.pop();
+      this._emit(this._history);
     }
   }
 }

@@ -1,11 +1,11 @@
 import React, { PureComponent, createContext } from 'react';
-import { Animated, Dimensions }  from 'react-native';
+import { Animated, Dimensions}  from 'react-native';
 import Layer from '../core/Layer';
 
 
-const { height, width } = Dimensions.get('window')
+const { height, width } = Dimensions.get('window');
 
-const ANIMATE_DURATION = 233;
+const ANIMATE_DURATION = 164;
 
 const noop = () => {};
 const { Provider, Consumer} = createContext({});
@@ -48,7 +48,7 @@ export class PageLife extends PureComponent {
     });
   }
 
-  renderProps = ({ route, ref}) => {
+  renderProps = ({ ref }) => {
     const { children } = this.props;
     this.link(ref);
     return children;
@@ -65,10 +65,10 @@ class Page extends PureComponent {
   constructor(props) {
     super(props);
     this._boxIt();
-    this.route = this.props.route;
+    this.route = props.route;
     this.state = {
-      translateX: new Animated.Value(width * 0.6),  // 透明度初始值设为0
-      opacity: new Animated.Value(0),
+      translateX: new Animated.Value(width),
+      opacity: new Animated.Value(0.8),
     }
   }
 
@@ -79,102 +79,82 @@ class Page extends PureComponent {
   }
 
   _animatingEnter = () => {
-    Animated.timing(                  // 随时间变化而执行动画
-      this.state.opacity,            // 动画中的变量值
+    Animated.timing(
+      this.state.opacity,
       {
-        toValue: 1,                   // 透明度最终变为1，即完全不透明
-        duration: ANIMATE_DURATION ,              // 让动画持续一段时间
-        // useNativeDriver: true,
+        toValue: 1,
+        duration: ANIMATE_DURATION,
       }
     ).start();
-    Animated.timing(                  // 随时间变化而执行动画
-      this.state.translateX,            // 动画中的变量值
+    Animated.timing(
+      this.state.translateX,
       {
-        toValue: 0,                   // 透明度最终变为1，即完全不透明
-        duration: ANIMATE_DURATION ,              // 让动画持续一段时间
-        // useNativeDriver: true,
+        toValue: 0,
+        duration: ANIMATE_DURATION,
       }
     ).start();
   }
 
   _animatingLeave = (duration) => {
-    console.log('animatingLeave');
-    Animated.timing(                  // 随时间变化而执行动画
-      this.state.opacity,            // 动画中的变量值
+    Animated.timing(
+      this.state.opacity,
       {
-        toValue: 0,                   // 透明度最终变为1，即完全不透明
-        duration,              // 让动画持续一段时间
-        // useNativeDriver: true,
+        toValue: 0.8,
+        duration,
       }
     ).start();
-    Animated.timing(                  // 随时间变化而执行动画
-      this.state.translateX,            // 动画中的变量值
+    Animated.timing(
+      this.state.translateX,
       {
-        toValue: width * 0.6,                   // 透明度最终变为1，即完全不透明
-        duration,              // 让动画持续一段时间
-        // useNativeDriver: true,
+        toValue: width,
+        duration,
       }
     ).start()
   }
 
   _boxIt() {
-    this._originOnShow = this._originOnHide = this._originRender = noop;
+    this._originOnShow = noop;
+    this._originOnHide = noop;
+    this._originRender = noop;
+    this._originBeforeEnter = Promise.resolve;
     this._originBeforeLeave = Promise.resolve;
 
-    if (this.componentDidMount && this.componentDidMount !== this._boxDidMount) {
-      this._originComponentDidMount = this.componentDidMount;
-      this.componentDidMount = this._boxDidMount;
-    }
-    if (this.componentWillUnmount && this.componentWillUnmount !== this._boxWillUnmount) {
-      this._originComponentWillUmount = this.componentWillUnmount;
-      this.componentWillUnmount = this._boxWillUnmount;
-    }
     if (this.render && this.render !== this._boxRender) {
       this._originRender = this.render;
       this.render = this._boxRender;
     }
     if (this.onShow !== this._boxOnShow) {
-      this._originOnShow = typeof this.onShow === 'function' ? this.onShow : noop;
+      if (typeof this.onShow === 'function') {
+        this._originOnShow = this.onShow;
+      }
       this.onShow = this._boxOnShow;
     }
     if (this.onHide !== this._boxOnHide) {
-      this._originOnHide = typeof this.onHide === 'function' ? this.onHide : noop;
+      if (typeof this.onHide === 'function') {
+        this._originOnHide = this.onHide;
+      }
       this.onHide = this._boxOnHide;
     }
-    if (this.beforeLeave && this.beforeLeave !== this._boxBeforeLeave) {
-      this._originBeforeLeave = this.beforeLeave.bind(this);
+    if (this.beforeEnter !== this._boxBeforeEnter) {
+      if (typeof this.beforeEnter === 'function') {
+        this._originBeforeEnter = this.beforeEnter.bind(this);
+      }
+      this.beforeEnter = this._boxBeforeEnter;
+    }
+    if (this.beforeLeave !== this._boxBeforeLeave) {
+      if (typeof this.beforeLeave === 'function') {
+        this._originBeforeLeave = this.beforeLeave.bind(this);
+      }
       this.beforeLeave = this._boxBeforeLeave;
     }
   }
 
+  _boxBeforeEnter(route) {
+    return this._originBeforeEnter(route);
+  }
+
   _boxBeforeLeave(route) {
     return this._originBeforeLeave(route);
-  }
-
-  _boxDidMount() {
-    this._originComponentDidMount();
-    this._boxOnShow();
-    this._animatingEnter();
-  }
-
-  _boxWillUnmount() {
-    this._boxOnHide();
-    this._originComponentWillUmount();
-  }
-
-  _boxRender() {
-    const { route } = this;
-    const { translateX, opacity } = this.state;
-    return <Layer
-      animated
-      style={{
-        opacity,
-        transform: [{ translateX } ]
-      }}>
-      <Provider value={{ ref: this, route }}>
-        {this._originRender()}
-      </Provider>
-    </Layer>
   }
 
   _boxOnShow() {
@@ -191,6 +171,21 @@ class Page extends PureComponent {
     Object.keys(onHideMap).forEach(key => {
       onHideMap[key](this.route);
     });
+  }
+
+  _boxRender() {
+    const { route } = this;
+    const { translateX, opacity } = this.state;
+    return <Layer
+      animated
+      style={{
+        opacity,
+        transform: [{ translateX }]
+      }}>
+      <Provider value={{ ...route, ref: this }}>
+        {this._originRender()}
+      </Provider>
+    </Layer>
   }
 
 }

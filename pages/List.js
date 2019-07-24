@@ -17,6 +17,13 @@ class List extends Page {
     console.log('list on Show R.db', R.db);
   }
 
+  beforeEnter() {
+    return new Promise((resolve, reject) => {
+      setTimeout(Math.random() > 0.2 ? resolve : reject, 300);
+    });
+    // return Promise.reject('List Reject');
+  }
+
   componentDidMount() {
     // console.log('List did mount');
   }

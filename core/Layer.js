@@ -18,8 +18,6 @@ const css = {
   }
 }
 
-
-
 class Layer extends Component {
   render() {
     const { children, style, animated, ...others } = this.props;
