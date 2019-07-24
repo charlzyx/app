@@ -469,17 +469,17 @@ AppState.addEventListener('change', (state) => {
  * 处理返回键
  */
 
-// BackHandler.addEventListener('hardwareBackPress', () => {
-//   const len = router._history.length;
-//   // 有弹窗的话, 优先 dismiss 弹窗
-//   if (len > 1) {
-//     if(!router.dismiss()) {
-//       router.pop();
-//     }
-//   } else {
-//     // 如果只剩下一个就用原生动作
-//     return false;
-//   }
-// });
+BackHandler.addEventListener('hardwareBackPress', () => {
+  const len = router._history.length;
+  // 有弹窗的话, 优先 dismiss 弹窗
+  if (len > 1) {
+    if(!router.dismiss()) {
+      router.pop();
+    }
+  } else {
+    // 如果只剩下一个就用原生动作
+    return false;
+  }
+});
 
 export default router;
