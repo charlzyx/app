@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppState } from 'react-native';
+import { AppState, BackHandler } from 'react-native';
 import produce, { applyPatches } from 'immer';
 
 
@@ -438,7 +438,9 @@ class Router {
     if (topNav.length > 1) {
       topNav.pop();
       this._emit(this._history);
+      return true;
     }
+    return false;
   }
 }
 
@@ -463,5 +465,21 @@ AppState.addEventListener('change', (state) => {
   }
   appState = state;
 });
+/**
+ * 处理返回键
+ */
+
+// BackHandler.addEventListener('hardwareBackPress', () => {
+//   const len = router._history.length;
+//   // 有弹窗的话, 优先 dismiss 弹窗
+//   if (len > 1) {
+//     if(!router.dismiss()) {
+//       router.pop();
+//     }
+//   } else {
+//     // 如果只剩下一个就用原生动作
+//     return false;
+//   }
+// });
 
 export default router;

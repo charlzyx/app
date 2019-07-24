@@ -7,27 +7,27 @@ import List from './List';
 class Home extends Page {
   gotoList = () => {
     R.push(List, { from: 'home' }).then(wt => {
-      console.log('Home then', wt);
+      // console.log('Home then', wt);
     }).catch(e => {
-      console.log('Home catch', e);
+      // console.log('Home catch', e);
     });
   }
 
   onShow() {
-    console.log('home on Show R.db', R.db);
-    // console.log('home show this', this);
+    // console.log('home on Show R.db', R.db);
+    // // console.log('home show this', this);
   }
 
   onHide() {
-    console.log('home hide this', this);
+    // console.log('home hide this', this);
   }
 
   componentDidMount() {
-    // console.log('home did mount', this);
+    // // console.log('home did mount', this);
   }
 
   componentWillUnmount() {
-    // console.log('home will umount', this);
+    // // console.log('home will umount', this);
   }
 
   render() {

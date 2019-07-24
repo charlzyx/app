@@ -37,15 +37,15 @@ class Detail extends Page {
 
 
   onShow() {
-    console.log('list on Show R.db', R.db);
+    // console.log('list on Show R.db', R.db);
   }
 
   componentDidMount() {
-    console.log('detail did mount');
+    // console.log('detail did mount');
   }
 
   componentWillUnmount() {
-    console.log('detail will umount');
+    // console.log('detail will umount');
   }
 
   render() {

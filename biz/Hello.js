@@ -4,10 +4,10 @@ import { PageLife } from '../core/Page'
 
 class Hello extends Component {
   onShow() {
-    console.log('hello onShow');
+    // console.log('hello onShow');
   }
   onHide() {
-    console.log('hello onHide');
+    // console.log('hello onHide');
   }
 
   render() {

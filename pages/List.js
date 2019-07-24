@@ -14,7 +14,7 @@ class List extends Page {
   }
 
   onShow() {
-    console.log('list on Show R.db', R.db);
+    // console.log('list on Show R.db', R.db);
   }
 
   beforeEnter() {
@@ -25,11 +25,11 @@ class List extends Page {
   }
 
   componentDidMount() {
-    // console.log('List did mount');
+    // // console.log('List did mount');
   }
 
   componentWillUnmount() {
-    // console.log('List will umount');
+    // // console.log('List will umount');
   }
 
   render() {
