@@ -161,6 +161,13 @@ class Router {
       return false;
     }
   }
+  parser(uri) {
+
+  }
+  _unacross = [];
+  across(paths) {
+
+  }
   /** 新增一个页面, push到历史栈顶 */
   push(page, data) {
     return new Promise((resolve, reject) => {
@@ -179,11 +186,14 @@ class Router {
        * 关联 id 和 type,
        * 需要注意的是: ref 则是在页面挂载之后才会有
        */
+      const name = typeof page === 'string' ? page : (type.name || type.displayName || type.toString());
       const route = {
         id: this._id,
         type,
+        path: `${name}.${this._id}`,
+        action: 'push',
         ref: null,
-        name: type.name || type.displayName || page.toString(),
+        name,
         element: null
       };
 
@@ -225,10 +235,6 @@ class Router {
             * 触发当前页面的 onHide
             */
            if (top) {
-              top.waiting = {
-                resolve,
-                reject,
-              };
               top.ref.onHide();
               /**
                * 存储当前页面的  revertIndex
@@ -249,6 +255,99 @@ class Router {
             this._emit(this._history);
             reject(e);
           })
+      }).catch(reject);
+    });
+  }
+
+  /** 新增一个页面, push到历史栈顶, 并等待页面返回值 */
+  wait(page, data) {
+    return new Promise((resolve, reject) => {
+      /**
+       * 存一下当前栈顶页面
+       */
+      const topNav = this._history[this._history.length - 1];
+      const top = topNav && topNav[0];
+      /** id 自增 */
+      this._id++;
+      const type = this._map[page] || page;
+      if (!type) {
+        reject(`${EXCEPTION.PAGE_NOT_FOUND} ${page}`)
+      }
+      /**
+       * 关联 id 和 type,
+       * 需要注意的是: ref 则是在页面挂载之后才会有
+       */
+      const name = typeof page === 'string' ? page : (type.name || type.displayName || type.toString());
+      const route = {
+        id: this._id,
+        type,
+        path: `${name}.${this._id}`,
+        action: 'wait',
+        ref: null,
+        name,
+        element: null
+      };
+
+      /** 生成 element, 添加 name */
+      try {
+        route.element = React.createElement(
+          type,
+          {
+            key: this._id,
+            ref: (ref) => this._ref(this._id, ref),
+            route,
+          },
+          null);
+      } catch (e) {
+        reject(e);
+        throw e;
+      }
+
+      /**
+       * 先直接 push, 反正也可见(通过初始 transform 来控制)
+       */
+      this._history.push([route]);
+      this._emit(this._history)
+
+      /**
+        * 等待页面刷新挂载完成, 0 不太靠谱, 此处应有 loop
+        */
+      this._waitingRef(route.id).then((nextRef) => {
+        /**
+         * 钩子走起来
+         */
+        const canI = nextRef.beforeEnter(route);
+        if (canI && typeof canI.then !== 'function') {
+          reject(`${EXCEPTION.BEFORE_ENTER_RETURN_NO_PROMISE} at: ${route.name}`);
+        }
+        const enterHooks = this._hooks.beforeEnter.map(hook => hook(route)).concat(canI);
+        Promise.all(enterHooks).then((wtf) => {
+          /**
+           * 触发当前页面的 onHide
+           */
+          if (top) {
+            top.waiting = {
+              resolve,
+              reject,
+            };
+            top.ref.onHide();
+            /**
+             * 存储当前页面的  revertIndex
+             */
+            top._revertIndex = this._put(data);
+          }
+          /** 触发新页面 Show */
+          nextRef.onShow();
+          /** 触发新页面的入场动画  */
+          nextRef._animatingEnter();
+        }).catch((e) => {
+          /**
+           * 钩子不给过, 就撤销push操作就行了
+           */
+          this._history.pop();
+          this._emit(this._history);
+          reject(e);
+        })
       }).catch(reject);
     });
   }
@@ -300,11 +399,14 @@ class Router {
        * 关联 id 和 type,
        * 需要注意的是: ref 则是在页面挂载之后才会有
        */
+      const name = typeof page === 'string' ? page : (type.name || type.displayName || type.toString());
       const route = {
         id: this._id,
         type,
+        path: `${name}.${this._id}`,
+        action: 'push',
         ref: null,
-        name: type.name || type.displayName || page,
+        name,
         element: null
       };
 
@@ -394,6 +496,7 @@ class Router {
           // 可能有参数, 所以 put 一下
           this._put(data);
           const next = this._history[this._history.length - 1][0];
+          next.action = 'go';
           // 等了好久终于等到今天
           if (next.waiting) next.waiting.resolve(data);
           // 触发这个页面的 onShow
@@ -473,12 +576,13 @@ BackHandler.addEventListener('hardwareBackPress', () => {
   const len = router._history.length;
   // 有弹窗的话, 优先 dismiss 弹窗
   if (len > 1) {
-    if(!router.dismiss()) {
+    if(router.dismiss() === false) {
       router.pop();
     }
+    return true;
   } else {
-    // 如果只剩下一个就用原生动作
-    return false;
+    // 如果只剩下一个就尝试取消弹窗, 没有弹窗就原生应用
+    return router.dismiss();
   }
 });
 
