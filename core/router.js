@@ -74,8 +74,10 @@ class Router {
     }
     this._map[path] = page;
   }
-  /** 路由数据 */
+  /** 路由数据, 一次性 */
   db = {};
+  /** 缓存到路由链路上的数据 */
+  keep = {};
   /**
    * 数据操作记录; 反向 patches, 感谢 immer
    * [https://github.com/immerjs/immer#patches](https://github.com/immerjs/immer#patches)
