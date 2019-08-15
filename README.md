@@ -1,6 +1,9 @@
 # Project App
 
-> outline
+- outline        
+
+
+
 ![outline](./App.png)
 
 # core: 如何设计一个React Native路由
